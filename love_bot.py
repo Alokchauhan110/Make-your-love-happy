@@ -1,6 +1,7 @@
 import logging
 import os
 import asyncio
+import threading  # <--- THIS IS THE MISSING LINE THAT CAUSED THE ERROR
 from io import BytesIO
 
 from flask import Flask
@@ -142,44 +143,37 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- NEW: Corrected way to run the bot and web server ---
 async def main():
+    """Sets up and runs the bot application."""
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
         logger.error("TELEGRAM_TOKEN environment variable not set.")
         return
 
-    # Start Flask server in a separate thread
-    flask_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': int(os.environ.get('PORT', 8080))})
-    flask_thread.daemon = True
-    flask_thread.start()
-    logger.info("Flask server started in a background thread.")
-
-    # Set up and run the bot
     application = Application.builder().token(token).build()
-
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("create", create)],
-        states={
-            TYPING_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reply)],
-        },
+        states={TYPING_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reply)]},
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    # This will run the bot until you stop it
-    try:
-        logger.info("Starting bot polling...")
-        await application.run_polling()
-    except Exception as e:
-        logger.error(f"An error occurred while running the bot: {e}")
-    finally:
-        logger.info("Bot is shutting down.")
+    # Run bot and Flask server concurrently
+    async with application:
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+
+        # Run Flask server in a separate thread
+        flask_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': int(os.environ.get('PORT', 8080))})
+        flask_thread.daemon = True
+        flask_thread.start()
+        logger.info("Flask server started.")
+        
+        # Keep the bot alive
+        await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Process interrupted by user.")
+    asyncio.run(main())
