@@ -73,8 +73,7 @@ QUESTIONS = {
     "COUNTDOWN_OCCASION": ("We're almost done! What is the special occasion for the countdown? (e.g., 'Our Anniversary', 'Your Birthday')", "COUNTDOWN_DATE"),
     "COUNTDOWN_DATE": ("What is the date for this occasion? (Format: YYYY-MM-DD)", "FINAL_HEADING"),
     "FINAL_HEADING": ("What should the final big heading say? (e.g., 'You are my everything')", "FINAL_MESSAGE"),
-    # --- THIS IS THE FIX ---
-    "FINAL_MESSAGE": ("And the final closing message?", None) # None indicates this is the last question
+    "FINAL_MESSAGE": ("And the final closing message?", None)
 }
 TYPING_REPLY = 1
 
@@ -96,6 +95,7 @@ async def create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(question_text, parse_mode='Markdown')
     return TYPING_REPLY
 
+# --- THIS IS THE CORRECTED FUNCTION ---
 async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     current_key = context.user_data.get('current_question_key')
     if not current_key:
@@ -105,11 +105,13 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     _text, next_key = QUESTIONS[current_key]
 
     if next_key:
+        # If there is a next question, ask it
         next_question_text, _ = QUESTIONS[next_key]
         context.user_data['current_question_key'] = next_key
         await update.message.reply_text(next_question_text, parse_mode='Markdown')
         return TYPING_REPLY
     else:
+        # This is the last question, so generate and send the file
         await update.message.reply_text("Perfect! All data collected. Generating your custom HTML file now...")
         
         answers = context.user_data['answers']
@@ -169,12 +171,15 @@ async def main():
         await application.start()
         await application.updater.start_polling()
 
-        flask_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': int(os.environ.get('PORT', 8080))})
-        flask_thread.daemon = True
-        flask_thread.start()
-        logger.info("Flask server started.")
+        # We don't need Flask for the bot to run, but Render needs a web service.
+        # This is a minimal web server to keep the service alive.
+        # Using a proper WSGI server like gunicorn is better for production.
+        from werkzeug.serving import run_simple
+        run_simple('0.0.0.0', int(os.environ.get('PORT', 8080)), app)
         
-        await asyncio.Event().wait()
+        await application.updater.stop()
+        await application.stop()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
