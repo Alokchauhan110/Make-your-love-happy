@@ -1,6 +1,5 @@
 import logging
 import os
-import threading
 import asyncio
 from io import BytesIO
 
@@ -20,11 +19,6 @@ app = Flask(__name__)
 @app.route('/')
 def hello():
     return "Bot is alive!"
-
-# THIS IS THE MISSING FUNCTION THAT CAUSED THE ERROR
-def run_flask():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
 
 # --- The Base HTML Template ---
 HTML_TEMPLATE = """
@@ -78,9 +72,8 @@ QUESTIONS = {
     "COUNTDOWN_OCCASION": ("We're almost done! What is the special occasion for the countdown? (e.g., 'Our Anniversary', 'Your Birthday')", "COUNTDOWN_DATE"),
     "COUNTDOWN_DATE": ("What is the date for this occasion? (Format: YYYY-MM-DD)", "FINAL_HEADING"),
     "FINAL_HEADING": ("What should the final big heading say? (e.g., 'You are my everything')", "FINAL_MESSAGE"),
-    "FINAL_MESSAGE": ("And the final closing message?", None) # None indicates the last question
+    "FINAL_MESSAGE": ("And the final closing message?", None)
 }
-# A single state for handling all replies
 TYPING_REPLY = 1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -93,11 +86,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     context.user_data['answers'] = {}
-    
     first_question_key = "GF_NAME"
     question_text, _ = QUESTIONS[first_question_key]
     context.user_data['current_question_key'] = first_question_key
-    
     await update.message.reply_text(question_text, parse_mode='Markdown')
     return TYPING_REPLY
 
@@ -116,21 +107,19 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return TYPING_REPLY
     else:
         await update.message.reply_text("Perfect! All data collected. Generating your custom HTML file now...")
-        
         answers = context.user_data['answers']
         format_data = {
-            'girlfriend_name': answers.get("GF_NAME"), 'user_name': answers.get("USER_NAME"),
-            'intro_message': answers.get("INTRO"), 'song_url': answers.get("SONG"),
-            'memory1_photo': answers.get("MEMORY1_PHOTO"), 'memory1_title': answers.get("MEMORY1_TITLE"),
-            'memory1_desc': answers.get("MEMORY1_DESC"), 'memory2_photo': answers.get("MEMORY2_PHOTO"),
-            'memory2_title': answers.get("MEMORY2_TITLE"), 'memory2_desc': answers.get("MEMORY2_DESC"),
-            'gallery_photo1': answers.get("GALLERY_1"), 'gallery_photo2': answers.get("GALLERY_2"),
-            'gallery_photo3': answers.get("GALLERY_3"), 'gallery_photo4': answers.get("GALLERY_4"),
-            'gallery_photo5': answers.get("GALLERY_5"), 'gallery_photo6': answers.get("GALLERY_6"),
-            'countdown_occasion': answers.get("COUNTDOWN_OCCASION"), 'countdown_date': answers.get("COUNTDOWN_DATE"),
-            'final_heading': answers.get("FINAL_HEADING"), 'final_message': answers.get("FINAL_MESSAGE")
+            'girlfriend_name': answers.get("GF_NAME", ""), 'user_name': answers.get("USER_NAME", ""),
+            'intro_message': answers.get("INTRO", ""), 'song_url': answers.get("SONG", ""),
+            'memory1_photo': answers.get("MEMORY1_PHOTO", ""), 'memory1_title': answers.get("MEMORY1_TITLE", ""),
+            'memory1_desc': answers.get("MEMORY1_DESC", ""), 'memory2_photo': answers.get("MEMORY2_PHOTO", ""),
+            'memory2_title': answers.get("MEMORY2_TITLE", ""), 'memory2_desc': answers.get("MEMORY2_DESC", ""),
+            'gallery_photo1': answers.get("GALLERY_1", ""), 'gallery_photo2': answers.get("GALLERY_2", ""),
+            'gallery_photo3': answers.get("GALLERY_3", ""), 'gallery_photo4': answers.get("GALLERY_4", ""),
+            'gallery_photo5': answers.get("GALLERY_5", ""), 'gallery_photo6': answers.get("GALLERY_6", ""),
+            'countdown_occasion': answers.get("COUNTDOWN_OCCASION", ""), 'countdown_date': answers.get("COUNTDOWN_DATE", ""),
+            'final_heading': answers.get("FINAL_HEADING", ""), 'final_message': answers.get("FINAL_MESSAGE", "")
         }
-        
         final_html = HTML_TEMPLATE.format(**format_data)
         html_file = BytesIO(final_html.encode('utf-8'))
         html_file.name = 'love_letter.html'
@@ -153,13 +142,20 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
-async def main_bot_logic():
-    """Sets up and runs the bot application."""
+# --- NEW: Corrected way to run the bot and web server ---
+async def main():
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
         logger.error("TELEGRAM_TOKEN environment variable not set.")
         return
 
+    # Start Flask server in a separate thread
+    flask_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': int(os.environ.get('PORT', 8080))})
+    flask_thread.daemon = True
+    flask_thread.start()
+    logger.info("Flask server started in a background thread.")
+
+    # Set up and run the bot
     application = Application.builder().token(token).build()
 
     conv_handler = ConversationHandler(
@@ -169,16 +165,21 @@ async def main_bot_logic():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    logger.info("Starting bot polling...")
-    await application.run_polling()
+    # This will run the bot until you stop it
+    try:
+        logger.info("Starting bot polling...")
+        await application.run_polling()
+    except Exception as e:
+        logger.error(f"An error occurred while running the bot: {e}")
+    finally:
+        logger.info("Bot is shutting down.")
+
 
 if __name__ == "__main__":
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    asyncio.run(main_bot_logic())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user.")
