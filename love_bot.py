@@ -1,7 +1,7 @@
 import logging
 import os
 import asyncio
-import threading  # <--- THIS IS THE MISSING LINE THAT CAUSED THE ERROR
+import threading
 from io import BytesIO
 
 from flask import Flask
@@ -73,7 +73,8 @@ QUESTIONS = {
     "COUNTDOWN_OCCASION": ("We're almost done! What is the special occasion for the countdown? (e.g., 'Our Anniversary', 'Your Birthday')", "COUNTDOWN_DATE"),
     "COUNTDOWN_DATE": ("What is the date for this occasion? (Format: YYYY-MM-DD)", "FINAL_HEADING"),
     "FINAL_HEADING": ("What should the final big heading say? (e.g., 'You are my everything')", "FINAL_MESSAGE"),
-    "FINAL_MESSAGE": ("And the final closing message?", None)
+    # --- THIS IS THE FIX ---
+    "FINAL_MESSAGE": ("And the final closing message?", None) # None indicates this is the last question
 }
 TYPING_REPLY = 1
 
@@ -87,9 +88,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     context.user_data['answers'] = {}
+    
     first_question_key = "GF_NAME"
     question_text, _ = QUESTIONS[first_question_key]
     context.user_data['current_question_key'] = first_question_key
+    
     await update.message.reply_text(question_text, parse_mode='Markdown')
     return TYPING_REPLY
 
@@ -108,6 +111,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return TYPING_REPLY
     else:
         await update.message.reply_text("Perfect! All data collected. Generating your custom HTML file now...")
+        
         answers = context.user_data['answers']
         format_data = {
             'girlfriend_name': answers.get("GF_NAME", ""), 'user_name': answers.get("USER_NAME", ""),
@@ -121,6 +125,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             'countdown_occasion': answers.get("COUNTDOWN_OCCASION", ""), 'countdown_date': answers.get("COUNTDOWN_DATE", ""),
             'final_heading': answers.get("FINAL_HEADING", ""), 'final_message': answers.get("FINAL_MESSAGE", "")
         }
+        
         final_html = HTML_TEMPLATE.format(**format_data)
         html_file = BytesIO(final_html.encode('utf-8'))
         html_file.name = 'love_letter.html'
@@ -144,13 +149,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 async def main():
-    """Sets up and runs the bot application."""
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
         logger.error("TELEGRAM_TOKEN environment variable not set.")
         return
 
     application = Application.builder().token(token).build()
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("create", create)],
         states={TYPING_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reply)]},
@@ -159,21 +164,17 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    # Run bot and Flask server concurrently
     async with application:
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
 
-        # Run Flask server in a separate thread
         flask_thread = threading.Thread(target=app.run, kwargs={'host': '0.0.0.0', 'port': int(os.environ.get('PORT', 8080))})
         flask_thread.daemon = True
         flask_thread.start()
         logger.info("Flask server started.")
         
-        # Keep the bot alive
         await asyncio.Event().wait()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
